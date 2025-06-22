@@ -1,15 +1,9 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import joblib
-import re
-import nltk
+import joblib, re, nltk
 from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 
-# ───────────────────────────────
-# 1) LOAD & CACHE ARTIFACTS
-# ───────────────────────────────
 @st.cache_resource
 def load_artifacts():
     model             = joblib.load("xgb_full_model.joblib")
@@ -18,15 +12,15 @@ def load_artifacts():
     TFIDF_VECTORS     = joblib.load("tfidf_vectorizers.joblib")
     portfolio         = pd.read_csv("portfolio_companies.csv")
     pe_funds          = pd.read_csv("pe_funds.csv")
-    return model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, portfolio, pe_funds
+
+
+    return model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS
 
 model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
-# Ensure NLTK resources
+
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
-
-# text cleaner (same as training)
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
 def clean_text(text):
@@ -35,55 +29,39 @@ def clean_text(text):
     tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]
     return " ".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w)>1)
 
-# ───────────────────────────────
-# 2) UI: select a company
-# ───────────────────────────────
 st.title("PE-Investor Recommender")
 company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
 
-# ───────────────────────────────
-# 3) BUILD CANDIDATES
-# ───────────────────────────────
+# Build comp_row
 comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
-# Pre-clean these two for the company itself (we'll broadcast them)
 for col in ["Sector","Subsector"]:
     comp_row[f"NLP_{col}"] = comp_row[col].apply(clean_text)
 
+# Prepare cands
 cands = PE_FUNDS.copy()
 cands["Target"] = company
-cands = cands.rename(columns={"PE_Name": "investor_id"})
+cands = cands.rename(columns={"PE_Name":"investor_id"})
 
 # ───────────────────────────────
-# 4) MERGE METADATA & NLP
+# 4) MERGE METADATA & NLP  (Fixed)
 # ───────────────────────────────
-# Include Sector & Subsector in this merge so those columns exist on cands
 cands = cands.merge(
     comp_row[[
-        "Target",
-        "Target HQ",
-        "PE HQ",
-        "source_country_tab",
-        "Sector",       # <— added
-        "Subsector"     # <— added
+        "Target","Target HQ","PE HQ",
+        "source_country_tab","Sector","Subsector"
     ]],
     on="Target", how="left"
 )
-
 cands = cands.merge(
     PE_FUNDS[[
-        "PE_Name",
-        "source_country_tab",
-        "Office in Spain (Y/N)",
-        "Top Geographies",
-        "Sectors"
+        "PE_Name","source_country_tab",
+        "Office in Spain (Y/N)","Top Geographies","Sectors"
     ]].rename(columns={
-        "PE_Name": "investor_id",
-        "source_country_tab": "source_country_tab_PE_fund"
+        "PE_Name":"investor_id",
+        "source_country_tab":"source_country_tab_PE_fund"
     }),
     on="investor_id", how="left"
 )
-
-# Now we can clean all four text columns without KeyErrors:
 for col in ["Sector","Subsector","Sectors","Top Geographies"]:
     cands[f"NLP_{col}"] = cands[col].fillna("").apply(clean_text)
 
