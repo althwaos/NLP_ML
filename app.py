@@ -21,7 +21,6 @@ def load_artifacts():
     return model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, portfolio, pe_funds
 
 model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
-
 # Ensure NLTK resources
 nltk.download("stopwords")
 nltk.download("wordnet")
@@ -46,30 +45,47 @@ company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique()
 # 3) BUILD CANDIDATES
 # ───────────────────────────────
 comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
+# Pre-clean these two for the company itself (we'll broadcast them)
 for col in ["Sector","Subsector"]:
     comp_row[f"NLP_{col}"] = comp_row[col].apply(clean_text)
 
 cands = PE_FUNDS.copy()
-cands["Target"]     = company
-cands = cands.rename(columns={"PE_Name":"investor_id"})
+cands["Target"] = company
+cands = cands.rename(columns={"PE_Name": "investor_id"})
 
 # ───────────────────────────────
 # 4) MERGE METADATA & NLP
 # ───────────────────────────────
+# Include Sector & Subsector in this merge so those columns exist on cands
 cands = cands.merge(
-    comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
+    comp_row[[
+        "Target",
+        "Target HQ",
+        "PE HQ",
+        "source_country_tab",
+        "Sector",       # <— added
+        "Subsector"     # <— added
+    ]],
     on="Target", how="left"
 )
+
 cands = cands.merge(
-    PE_FUNDS[["PE_Name","source_country_tab","Office in Spain (Y/N)","Top Geographies","Sectors"]]
-      .rename(columns={
-          "PE_Name":"investor_id",
-          "source_country_tab":"source_country_tab_PE_fund"
-      }),
+    PE_FUNDS[[
+        "PE_Name",
+        "source_country_tab",
+        "Office in Spain (Y/N)",
+        "Top Geographies",
+        "Sectors"
+    ]].rename(columns={
+        "PE_Name": "investor_id",
+        "source_country_tab": "source_country_tab_PE_fund"
+    }),
     on="investor_id", how="left"
 )
+
+# Now we can clean all four text columns without KeyErrors:
 for col in ["Sector","Subsector","Sectors","Top Geographies"]:
-    cands[f"NLP_{col}"] = cands[col].apply(clean_text)
+    cands[f"NLP_{col}"] = cands[col].fillna("").apply(clean_text)
 
 # ───────────────────────────────
 # 5) VECTORIZE
