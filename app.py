@@ -12,12 +12,12 @@ from nltk.stem import WordNetLemmatizer
 # ───────────────────────────────
 @st.cache(allow_output_mutation=True)
 def load_artifacts():
-    model             = joblib.load("models/xgb_full_model.joblib")
-    FEATURE_COLS      = joblib.load("models/feature_columns.joblib")
-    CAT_COLS          = joblib.load("models/categorical_columns.joblib")
-    TFIDF_VECTORS     = joblib.load("models/tfidf_vectorizers.joblib")
-    portfolio         = pd.read_csv("data/portfolio_companies.csv")
-    pe_funds          = pd.read_csv("data/pe_funds.csv")
+    model             = joblib.load("xgb_full_model.joblib")
+    FEATURE_COLS      = joblib.load("feature_columns.joblib")
+    CAT_COLS          = joblib.load("categorical_columns.joblib")
+    TFIDF_VECTORS     = joblib.load("tfidf_vectorizers.joblib")
+    portfolio         = pd.read_csv("portfolio_companies.csv")
+    pe_funds          = pd.read_csv("pe_funds.csv")
     return model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, portfolio, pe_funds
 
 model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
