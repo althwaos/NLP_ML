@@ -22,104 +22,106 @@ def load_artifacts():
 model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
 
 # ───────────────────────────────────────
-
-# ───────────────────────────────
 # 2) NLTK SETUP & TEXT CLEANER
-# ───────────────────────────────
+# ───────────────────────────────────────
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
+
 def clean_text(text: str) -> str:
     txt = str(text).lower()
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
     tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]
     return " ".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w) > 1)
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 3) UI: COMPANY SELECTOR
-# ───────────────────────────────
+# ───────────────────────────────────────
 st.title("PE-Investor Recommender")
 company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 4) BUILD CANDIDATES
-# ───────────────────────────────
-# a) single-row company metadata
+# ───────────────────────────────────────
+# a) One-row company metadata
 comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
 
-# b) pre-clean the company’s Sector & Subsector once
+# b) Pre-clean company’s Sector/Subsector
 clean_sector    = clean_text(comp_row["Sector"].iloc[0] or "")
 clean_subsector = clean_text(comp_row["Subsector"].iloc[0] or "")
 
-# c) copy all PE funds and attach the selected company
+# c) Copy all PE funds & attach the company
 cands = PE_FUNDS.copy()
 cands["Target"] = company
 cands = cands.rename(columns={"PE_Name": "investor_id"})
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 5) MERGE METADATA
-# ───────────────────────────────
-# portfolio metadata (exclude Sector/Subsector here)
+# ───────────────────────────────────────
+# Portfolio metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
 )
 
-# fund metadata: rename columns to avoid dupes
+# Fund metadata — rename text cols to avoid conflict
 pe_meta = PE_FUNDS[[
-    "PE_Name", "source_country_tab", "Office in Spain (Y/N)",
-    "Top Geographies", "Sectors"
+    "PE_Name",
+    "source_country_tab",
+    "Office in Spain (Y/N)",
+    "Top Geographies",
+    "Sectors"
 ]].rename(columns={
     "PE_Name": "investor_id",
     "source_country_tab": "source_country_tab_PE_fund",
     "Top Geographies": "Fund_Top_Geographies",
     "Sectors": "Fund_Sectors"
 })
-
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 6) BUILD ALL 4 NLP_* COLUMNS
-# ───────────────────────────────
-# company-wide text (broadcast)
+# ───────────────────────────────────────
+# Company-wide (broadcast)
 cands["NLP_Sector"]    = clean_sector
 cands["NLP_Subsector"] = clean_subsector
 
-# fund-specific text
+# Fund-specific (row-by-row)
 cands["NLP_Sectors"]         = cands["Fund_Sectors"].fillna("").apply(clean_text)
 cands["NLP_Top Geographies"] = cands["Fund_Top_Geographies"].fillna("").apply(clean_text)
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 7) VECTORIZE & ASSEMBLE FEATURES
-# ───────────────────────────────
-# a) TF-IDF for each of the four text columns
+# ───────────────────────────────────────
+# a) TF-IDF per text column
 for col, vect in TFIDF_VECTORS.items():
     key = f"NLP_{col}"
     mat = vect.transform(cands[key]).toarray()
-    tfdf = pd.DataFrame(
+    df_tfidf = pd.DataFrame(
         mat,
         columns=[f"TFIDF_{col}_{i}" for i in range(mat.shape[1])],
         index=cands.index
     )
-    cands = pd.concat([cands, tfdf], axis=1)
+    cands = pd.concat([cands, df_tfidf], axis=1)
 
-# b) one-hot encode categorical metadata
-categ = pd.get_dummies(cands[CAT_COLS], drop_first=True)
+# b) One-hot encode only the valid categorical cols
+valid_cat_cols = [c for c in CAT_COLS if c in cands.columns]
+categ = pd.get_dummies(cands[valid_cat_cols], drop_first=True)
 
-# c) build final feature matrix & align columns
+# c) Build and align final feature matrix
 X_new = pd.concat([
     cands.filter(regex="^TFIDF_"),
     categ
 ], axis=1).reindex(columns=FEATURE_COLS, fill_value=0)
 
-# ───────────────────────────────
+# ───────────────────────────────────────
 # 8) PREDICT & SHOW TOP-10
-# ───────────────────────────────
+# ───────────────────────────────────────
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
 
 top10 = cands.nlargest(10, "score")[["investor_id","score"]]
 st.subheader(f"Top 10 Investors for {company}")
-st.table(top10.style.format({"score":"{:.2%}"}))
+st.table(top10.style.format({"score": "{:.2%}"}))
