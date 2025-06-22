@@ -1,1 +1,101 @@
-{"nbformat":4,"nbformat_minor":0,"metadata":{"colab":{"provenance":[],"authorship_tag":"ABX9TyP6LC0olwldOeMTE19kVP3+"},"kernelspec":{"name":"python3","display_name":"Python 3"},"language_info":{"name":"python"}},"cells":[{"cell_type":"code","execution_count":null,"metadata":{"id":"cpfpDeBheZlL"},"outputs":[],"source":["# app.py\n","import streamlit as st\n","import pandas as pd\n","import numpy as np\n","import joblib\n","import re\n","import nltk\n","from nltk.corpus import stopwords, wordnet\n","from nltk.stem import WordNetLemmatizer\n","\n","# ───────────────────────────────\n","# 1) LOAD & CACHE ARTIFACTS\n","# ───────────────────────────────\n","@st.cache(allow_output_mutation=True)\n","def load_artifacts():\n","    # model + metadata\n","    model = joblib.load(\"xgb_full_model.joblib\")\n","    feature_cols       = joblib.load(\"feature_columns.joblib\")\n","    cat_cols           = joblib.load(\"categorical_columns.joblib\")\n","    tfidf_vectorizers  = joblib.load(\"tfidf_vectorizers.joblib\")\n","    # raw data\n","    portfolio = pd.read_csv(\"portfolio_companies.csv\")\n","    pe_funds  = pd.read_csv(\"pe_funds.csv\")\n","    return model, feature_cols, cat_cols, tfidf_vectorizers, portfolio, pe_funds\n","\n","model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()\n","\n","# Ensure NLTK assets\n","nltk.download(\"stopwords\")\n","nltk.download(\"wordnet\")\n","nltk.download(\"omw-1.4\")\n","\n","# text cleaner (same as training)\n","lemmatizer = WordNetLemmatizer()\n","stop_words = set(stopwords.words(\"english\"))\n","def clean_text(text):\n","    txt = str(text).lower()\n","    txt = re.sub(r\"[^a-z0-9\\s]\", \" \", txt)\n","    tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]\n","    return \" \".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w)>1)\n","\n","# ───────────────────────────────\n","# 2) UI: select a company\n","# ───────────────────────────────\n","st.title(\"PE-Investor Recommender\")\n","company = st.selectbox(\"Pick a portfolio company:\", PORTFOLIO[\"Target\"].unique())\n","\n","# ───────────────────────────────\n","# 3) BUILD CANDIDATES\n","# ───────────────────────────────\n","# a) Get the one-row company record\n","comp_row = PORTFOLIO[PORTFOLIO[\"Target\"] == company].iloc[[0]]\n","\n","# b) Clean its text fields\n","for col in [\"Sector\",\"Subsector\"]:\n","    comp_row[f\"NLP_{col}\"] = comp_row[col].apply(clean_text)\n","\n","# c) Prepare candidate PE table\n","cands = PE_FUNDS.copy()\n","cands[\"Target\"]      = company\n","cands = cands.rename(columns={\"PE_Name\":\"investor_id\"})\n","\n","# ───────────────────────────────\n","# 4) MERGE METADATA & NLP\n","# ───────────────────────────────\n","# portfolio metadata\n","cands = cands.merge(\n","    comp_row[[\"Target\",\"Target HQ\",\"PE HQ\",\"source_country_tab\"]],\n","    on=\"Target\", how=\"left\"\n",")\n","# PE fund metadata\n","cands = cands.merge(\n","    PE_FUNDS[[\"PE_Name\",\"source_country_tab\",\"Office in Spain (Y/N)\",\"Top Geographies\",\"Sectors\"]]\n","      .rename(columns={\n","          \"PE_Name\":\"investor_id\",\n","          \"source_country_tab\":\"source_country_tab_PE_fund\"\n","      }),\n","    on=\"investor_id\", how=\"left\"\n",")\n","# clean text for all four NLP cols\n","for col in [\"Sector\",\"Subsector\",\"Sectors\",\"Top Geographies\"]:\n","    cands[f\"NLP_{col}\"] = cands[col].apply(clean_text)\n","\n","# ───────────────────────────────\n","# 5) VECTORIZE\n","# ───────────────────────────────\n","# a) TF-IDF on each column\n","for col, vect in TFIDF_VECTORS.items():\n","    key = f\"NLP_{col}\"\n","    mat = vect.transform(cands[key]).toarray()\n","    tfdf = pd.DataFrame(mat,\n","                        columns=[f\"TFIDF_{col}_{i}\" for i in range(mat.shape[1])],\n","                        index=cands.index)\n","    cands = pd.concat([cands, tfdf], axis=1)\n","\n","# b) One-hot encode the categorical metadata\n","categ = pd.get_dummies(cands[CAT_COLS], drop_first=True)\n","\n","# c) Assemble final feature matrix\n","X_new = pd.concat([\n","    cands.filter(regex=\"^TFIDF_\"),\n","    categ\n","], axis=1).reindex(columns=FEATURE_COLS, fill_value=0)\n","\n","# ───────────────────────────────\n","# 6) PREDICT & DISPLAY TOP-10\n","# ───────────────────────────────\n","probs = model.predict_proba(X_new)[:,1]\n","cands[\"score\"] = probs\n","top10 = cands.nlargest(10, \"score\")[[\"investor_id\",\"score\"]]\n","\n","st.subheader(f\"Top 10 Investors for {company}\")\n","st.table(top10.style.format({\"score\":\"{:.2%}\"}))\n"]}]}
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+import re
+import nltk
+from nltk.corpus import stopwords, wordnet
+from nltk.stem import WordNetLemmatizer
+
+# ───────────────────────────────
+# 1) LOAD & CACHE ARTIFACTS
+# ───────────────────────────────
+@st.cache(allow_output_mutation=True)
+def load_artifacts():
+    model             = joblib.load("models/xgb_full_model.joblib")
+    FEATURE_COLS      = joblib.load("models/feature_columns.joblib")
+    CAT_COLS          = joblib.load("models/categorical_columns.joblib")
+    TFIDF_VECTORS     = joblib.load("models/tfidf_vectorizers.joblib")
+    portfolio         = pd.read_csv("data/portfolio_companies.csv")
+    pe_funds          = pd.read_csv("data/pe_funds.csv")
+    return model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, portfolio, pe_funds
+
+model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
+
+# Ensure NLTK resources
+nltk.download("stopwords")
+nltk.download("wordnet")
+nltk.download("omw-1.4")
+
+# text cleaner (same as training)
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words("english"))
+def clean_text(text):
+    txt = str(text).lower()
+    txt = re.sub(r"[^a-z0-9\s]", " ", txt)
+    tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]
+    return " ".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w)>1)
+
+# ───────────────────────────────
+# 2) UI: select a company
+# ───────────────────────────────
+st.title("PE-Investor Recommender")
+company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
+
+# ───────────────────────────────
+# 3) BUILD CANDIDATES
+# ───────────────────────────────
+comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
+for col in ["Sector","Subsector"]:
+    comp_row[f"NLP_{col}"] = comp_row[col].apply(clean_text)
+
+cands = PE_FUNDS.copy()
+cands["Target"]     = company
+cands = cands.rename(columns={"PE_Name":"investor_id"})
+
+# ───────────────────────────────
+# 4) MERGE METADATA & NLP
+# ───────────────────────────────
+cands = cands.merge(
+    comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
+    on="Target", how="left"
+)
+cands = cands.merge(
+    PE_FUNDS[["PE_Name","source_country_tab","Office in Spain (Y/N)","Top Geographies","Sectors"]]
+      .rename(columns={
+          "PE_Name":"investor_id",
+          "source_country_tab":"source_country_tab_PE_fund"
+      }),
+    on="investor_id", how="left"
+)
+for col in ["Sector","Subsector","Sectors","Top Geographies"]:
+    cands[f"NLP_{col}"] = cands[col].apply(clean_text)
+
+# ───────────────────────────────
+# 5) VECTORIZE
+# ───────────────────────────────
+for col, vect in TFIDF_VECTORS.items():
+    key = f"NLP_{col}"
+    mat = vect.transform(cands[key]).toarray()
+    tfdf = pd.DataFrame(
+        mat,
+        columns=[f"TFIDF_{col}_{i}" for i in range(mat.shape[1])],
+        index=cands.index
+    )
+    cands = pd.concat([cands, tfdf], axis=1)
+
+categ = pd.get_dummies(cands[CAT_COLS], drop_first=True)
+X_new = pd.concat([
+    cands.filter(regex="^TFIDF_"),
+    categ
+], axis=1).reindex(columns=FEATURE_COLS, fill_value=0)
+
+# ───────────────────────────────
+# 6) PREDICT & DISPLAY TOP-10
+# ───────────────────────────────
+probs = model.predict_proba(X_new)[:,1]
+cands["score"] = probs
+top10 = cands.nlargest(10, "score")[["investor_id","score"]]
+
+st.subheader(f"Top 10 Investors for {company}")
+st.table(top10.style.format({"score":"{:.2%}"}))
