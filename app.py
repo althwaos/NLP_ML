@@ -10,7 +10,7 @@ from nltk.stem import WordNetLemmatizer
 # ───────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
 # ───────────────────────────────
-@st.cache(allow_output_mutation=True)
+@st.cache_resource
 def load_artifacts():
     model             = joblib.load("xgb_full_model.joblib")
     FEATURE_COLS      = joblib.load("feature_columns.joblib")
