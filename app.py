@@ -8,9 +8,8 @@ import nltk
 # ───────────────────────────────────────
 # 0) Gemini SDK import & configure
 # ───────────────────────────────────────
-import google.genai as genai
+import google.generativeai as genai
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
-client = genai
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -53,11 +52,8 @@ def clean_text(text: str) -> str:
 # ───────────────────────────────────────
 # 3) UI: COMPANY SELECTOR
 # ───────────────────────────────────────
-st.title("PE-Investor Recommender + Insights")
-company = st.selectbox(
-    "Pick a portfolio company:",
-    PORTFOLIO["Target"].unique()
-)
+st.title("PE-Investor Recommender + Gemini Insights")
+company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
 
 # ───────────────────────────────────────
 # 4) BUILD CANDIDATES & METADATA
@@ -142,13 +138,13 @@ user   = (
     "Please give a one-sentence rationale for each."
 )
 
-response = client.chat.completions.create(
+response = genai.chat.completions.create(
     model="gemini-pro",
     temperature=0.5,
     messages=[
         {"author":"system","content":system},
         {"author":"user",  "content":user},
-    ],
+    ]
 )
 
 insight = response.choices[0].message.content
