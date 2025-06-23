@@ -53,7 +53,10 @@ def clean_text(text: str) -> str:
 # 3) UI: COMPANY SELECTOR
 # ───────────────────────────────────────
 st.title("PE-Investor Recommender + Gemini Insights")
-company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
+company = st.selectbox(
+    "Pick a portfolio company:",
+    PORTFOLIO["Target"].unique()
+)
 
 # ───────────────────────────────────────
 # 4) BUILD CANDIDATES & METADATA
@@ -64,7 +67,7 @@ clean_subsector = clean_text(comp_row["Subsector"].iloc[0] or "")
 
 cands = PE_FUNDS.copy()
 cands["Target"] = company
-cands = cands.rename(columns={"PE_Name": "investor_id"})
+cands = cands.rename(columns={"PE_Name":"investor_id"})
 
 # merge portfolio metadata
 cands = cands.merge(
@@ -72,15 +75,15 @@ cands = cands.merge(
     on="Target", how="left"
 )
 
-# merge fund metadata (renamed)
+# merge fund metadata
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
 ]].rename(columns={
-    "PE_Name":            "investor_id",
-    "source_country_tab": "source_country_tab_PE_fund",
-    "Top Geographies":    "Fund_Top_Geographies",
-    "Sectors":            "Fund_Sectors"
+    "PE_Name":"investor_id",
+    "source_country_tab":"source_country_tab_PE_fund",
+    "Top Geographies":"Fund_Top_Geographies",
+    "Sectors":"Fund_Sectors"
 })
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
@@ -121,7 +124,7 @@ cands["score"] = probs
 
 top10 = cands.nlargest(10, "score")[["investor_id","score"]]
 st.subheader(f"Top 10 Investors for {company}")
-st.table(top10.style.format({"score": "{:.2%}"}))
+st.table(top10.style.format({"score":"{:.2%}"}))
 
 # ───────────────────────────────────────
 # 8) AUTO-GENERATED INSIGHTS via Gemini
@@ -138,13 +141,13 @@ user   = (
     "Please give a one-sentence rationale for each."
 )
 
-response = genai.chat.completions.create(
+response = genai.chat.create(
     model="gemini-pro",
     temperature=0.5,
     messages=[
         {"author":"system","content":system},
         {"author":"user",  "content":user},
-    ]
+    ],
 )
 
 insight = response.choices[0].message.content
