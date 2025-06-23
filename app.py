@@ -10,7 +10,6 @@ import google.generativeai as genai
 # 0) CONFIGURE GEMINI
 # ───────────────────────────────────────
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
-client = genai.Client()
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -38,6 +37,7 @@ from nltk.stem import WordNetLemmatizer
 
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
+
 def clean_text(text: str) -> str:
     txt = str(text).lower()
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
@@ -64,7 +64,7 @@ cands = PE_FUNDS.copy()
 cands["Target"] = company
 cands = cands.rename(columns={"PE_Name":"investor_id"})
 
-# Merge portfolio & fund metadata
+# Merge metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
@@ -113,7 +113,7 @@ st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score":"{:.2%}"}))
 
 # ───────────────────────────────────────
-# 4) AUTO-GENERATED INSIGHTS (Top-3)
+# 4) AUTO‐GENERATED INSIGHTS (Top‐3)
 # ───────────────────────────────────────
 items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
@@ -122,11 +122,11 @@ items = "\n".join(
 system = "You are a knowledgeable private-equity research assistant."
 user   = (
     f"I’ve recommended these top 3 investors for {company}:\n\n{items}\n\n"
-    "For each, provide a one-sentence rationale linking geography, sector focus, or past deals."
+    "Please give a one-sentence rationale for each."
 )
 
-# Use the client.chat.create interface
-response = client.chat.create(
+# Call gemini via genai.chat.create()
+response = genai.chat.create(
     model="gemini-pro",
     temperature=0.6,
     messages=[
@@ -134,7 +134,7 @@ response = client.chat.create(
         {"author":"user",  "content":user},
     ],
 )
-insight = response.last
 
-st.markdown("## 💡 AI-Generated Insights")
+insight = response.choices[0].message.content
+st.markdown("## 💡 AI‐Generated Insights")
 st.write(insight)
