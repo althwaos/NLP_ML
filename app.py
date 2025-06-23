@@ -4,11 +4,11 @@ import pandas as pd
 import joblib
 import re
 import nltk
+import google.generativeai as genai
 
 # ───────────────────────────────────────
-# 0) Gemini SDK import & configure
+# 0) CONFIGURE GEMINI
 # ───────────────────────────────────────
-import google.generativeai as genai
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
 
 # ───────────────────────────────────────
@@ -32,7 +32,6 @@ model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifac
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
-
 from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 
@@ -50,32 +49,32 @@ def clean_text(text: str) -> str:
     )
 
 # ───────────────────────────────────────
-# 3) UI: COMPANY SELECTOR
+# 3) UI: COMPANY SELECTOR & PIPELINE
 # ───────────────────────────────────────
-st.title("PE-Investor Recommender + Gemini Insights")
+st.title("PE-Investor Recommender")
+
 company = st.selectbox(
     "Pick a portfolio company:",
     PORTFOLIO["Target"].unique()
 )
 
-# ───────────────────────────────────────
-# 4) BUILD CANDIDATES & METADATA
-# ───────────────────────────────────────
+# Build one-row company metadata
 comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
 clean_sector    = clean_text(comp_row["Sector"].iloc[0] or "")
 clean_subsector = clean_text(comp_row["Subsector"].iloc[0] or "")
 
+# Prepare PE candidates
 cands = PE_FUNDS.copy()
 cands["Target"] = company
 cands = cands.rename(columns={"PE_Name":"investor_id"})
 
-# merge portfolio metadata
+# Merge portfolio metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
 )
 
-# merge fund metadata
+# Merge fund metadata
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
@@ -87,17 +86,13 @@ pe_meta = PE_FUNDS[[
 })
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
-# ───────────────────────────────────────
-# 5) BUILD NLP FIELDS
-# ───────────────────────────────────────
+# Build NLP fields
 cands["NLP_Sector"]    = clean_sector
 cands["NLP_Subsector"] = clean_subsector
 cands["NLP_Sectors"]         = cands["Fund_Sectors"].fillna("").apply(clean_text)
 cands["NLP_Top Geographies"] = cands["Fund_Top_Geographies"].fillna("").apply(clean_text)
 
-# ───────────────────────────────────────
-# 6) VECTORIZE & ASSEMBLE FEATURES
-# ───────────────────────────────────────
+# Vectorize + assemble features
 for col, vect in TFIDF_VECTORS.items():
     key = f"NLP_{col}"
     mat = vect.transform(cands[key]).toarray()
@@ -116,9 +111,7 @@ X_new = (
       .reindex(columns=FEATURE_COLS, fill_value=0)
 )
 
-# ───────────────────────────────────────
-# 7) PREDICT & DISPLAY TOP-10
-# ───────────────────────────────────────
+# Predict & show Top-10
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
 
@@ -127,29 +120,21 @@ st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score":"{:.2%}"}))
 
 # ───────────────────────────────────────
-# 8) AUTO-GENERATED INSIGHTS via Gemini
+# 4) SIMPLE GEMINI SANITY-CHECK
 # ───────────────────────────────────────
-items = "\n".join(
-    f"{i+1}. {row.investor_id} ({row.score:.1%})"
-    for i, row in top10.head(3).iterrows()
-)
+st.markdown("---")
+st.subheader("🤖 Gemini Sanity-Check")
 
-system = "You are a helpful private-equity research assistant."
-user   = (
-    f"I’ve recommended these top 3 investors for {company}:\n\n"
-    f"{items}\n\n"
-    "Please give a one-sentence rationale for each."
-)
-
-response = genai.chat.create(
-    model="gemini-pro",
-    temperature=0.5,
-    messages=[
-        {"author":"system","content":system},
-        {"author":"user",  "content":user},
-    ],
-)
-
-insight = response.choices[0].message.content
-st.markdown("## 💡 AI-Generated Insights")
-st.write(insight)
+user_input = st.text_input("Ask Gemini anything:", "Hello, Gemini!")
+if st.button("Send to Gemini"):
+    response = genai.chat.create(
+        model="gemini-pro",
+        temperature=0.5,
+        messages=[
+            {"author":"system","content":"You are a helpful assistant."},
+            {"author":"user",  "content":user_input},
+        ],
+    )
+    reply = response.choices[0].message.content
+    st.write("**Gemini says:**")
+    st.write(reply)
