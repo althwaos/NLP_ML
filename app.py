@@ -69,8 +69,7 @@ cands = cands.merge(
 
 # merge fund metadata (renamed)
 pe_meta = PE_FUNDS[[
-    "PE_Name","source_country_tab","Office in Spain (Y/N)",
-    "Top Geographies","Sectors"
+    "PE_Name","source_country_tab","Office in Spain (Y/N)","Top Geographies","Sectors"
 ]].rename(columns={
     "PE_Name":              "investor_id",
     "source_country_tab":   "source_country_tab_PE_fund",
