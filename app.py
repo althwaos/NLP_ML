@@ -28,11 +28,12 @@ def load_artifacts():
 model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
 
 # ───────────────────────────────────────
-# 2) NLTK SETUP & TEXT CLEANER
+# 2) NLTK SETUP & CLEANER
 # ───────────────────────────────────────
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
+
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
 
@@ -59,26 +60,26 @@ cands = PE_FUNDS.copy()
 cands["Target"] = company
 cands = cands.rename(columns={"PE_Name": "investor_id"})
 
-# portfolio metadata
+# merge portfolio metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
 )
 
-# fund metadata (renamed to avoid collisions)
+# merge fund metadata (renamed)
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
 ]].rename(columns={
-    "PE_Name":            "investor_id",
-    "source_country_tab": "source_country_tab_PE_fund",
-    "Top Geographies":    "Fund_Top_Geographies",
-    "Sectors":            "Fund_Sectors"
+    "PE_Name":              "investor_id",
+    "source_country_tab":   "source_country_tab_PE_fund",
+    "Top Geographies":      "Fund_Top_Geographies",
+    "Sectors":              "Fund_Sectors"
 })
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
 # ───────────────────────────────────────
-# 5) BUILD NLP TEXT FIELDS
+# 5) BUILD NLP FIELDS
 # ───────────────────────────────────────
 cands["NLP_Sector"]    = clean_sector
 cands["NLP_Subsector"] = clean_subsector
@@ -101,18 +102,18 @@ for col, vect in TFIDF_VECTORS.items():
 valid_cat = [c for c in CAT_COLS if c in cands.columns]
 categ = pd.get_dummies(cands[valid_cat], drop_first=True)
 
-X_new = pd.concat([
-    cands.filter(regex="^TFIDF_"),
-    categ
-], axis=1).reindex(columns=FEATURE_COLS, fill_value=0)
+X_new = (
+    pd.concat([cands.filter(regex="^TFIDF_"), categ], axis=1)
+      .reindex(columns=FEATURE_COLS, fill_value=0)
+)
 
 # ───────────────────────────────────────
-# 7) PREDICT TOP-10
+# 7) PREDICT & SHOW TOP-10
 # ───────────────────────────────────────
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
-top10 = cands.nlargest(10, "score")[["investor_id","score"]]
 
+top10 = cands.nlargest(10, "score")[["investor_id","score"]]
 st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score": "{:.2%}"}))
 
