@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import joblib
@@ -9,6 +10,7 @@ import nltk
 # ───────────────────────────────────────
 import google.genai as genai
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
+client = genai
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -53,7 +55,7 @@ def clean_text(text: str) -> str:
 # ───────────────────────────────────────
 st.title("PE-Investor Recommender + Insights")
 company = st.selectbox(
-    "Pick a portfolio company:", 
+    "Pick a portfolio company:",
     PORTFOLIO["Target"].unique()
 )
 
@@ -74,7 +76,7 @@ cands = cands.merge(
     on="Target", how="left"
 )
 
-# merge fund metadata (with renames)
+# merge fund metadata (renamed)
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
@@ -133,18 +135,16 @@ items = "\n".join(
     for i, row in top10.head(3).iterrows()
 )
 
-system = "You are a knowledgeable private-equity research assistant."
-user   = f"""
-I’ve recommended these top 3 investors for {company}:
-{items}
+system = "You are a helpful private-equity research assistant."
+user   = (
+    f"I’ve recommended these top 3 investors for {company}:\n\n"
+    f"{items}\n\n"
+    "Please give a one-sentence rationale for each."
+)
 
-1) Summarize why they match (geography, sector focus, past deals).
-2) For each, list one recent public news title or URL showing their interest.
-"""
-
-response = genai.chat.completions.create(
+response = client.chat.completions.create(
     model="gemini-pro",
-    temperature=0.7,
+    temperature=0.5,
     messages=[
         {"author":"system","content":system},
         {"author":"user",  "content":user},
@@ -152,6 +152,5 @@ response = genai.chat.completions.create(
 )
 
 insight = response.choices[0].message.content
-
 st.markdown("## 💡 AI-Generated Insights")
 st.write(insight)
