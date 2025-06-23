@@ -51,7 +51,7 @@ def clean_text(text: str) -> str:
 # ───────────────────────────────────────
 # 3) UI: COMPANY SELECTOR & PIPELINE
 # ───────────────────────────────────────
-st.title("PE-Investor Recommender")
+st.title("PE-Investor Recommender + Insights")
 
 company = st.selectbox(
     "Pick a portfolio company:",
@@ -92,7 +92,7 @@ cands["NLP_Subsector"] = clean_subsector
 cands["NLP_Sectors"]         = cands["Fund_Sectors"].fillna("").apply(clean_text)
 cands["NLP_Top Geographies"] = cands["Fund_Top_Geographies"].fillna("").apply(clean_text)
 
-# Vectorize + assemble features
+# Vectorize & assemble features
 for col, vect in TFIDF_VECTORS.items():
     key = f"NLP_{col}"
     mat = vect.transform(cands[key]).toarray()
@@ -111,7 +111,7 @@ X_new = (
       .reindex(columns=FEATURE_COLS, fill_value=0)
 )
 
-# Predict & show Top-10
+# Predict & display Top-10
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
 
@@ -120,21 +120,30 @@ st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score":"{:.2%}"}))
 
 # ───────────────────────────────────────
-# 4) SIMPLE GEMINI SANITY-CHECK
+# 4) AUTO-GENERATED INSIGHTS (Top-3)
 # ───────────────────────────────────────
-st.markdown("---")
-st.subheader("🤖 Gemini Sanity-Check")
+items = "\n".join(
+    f"{i+1}. {row.investor_id} ({row.score:.1%})"
+    for i, row in top10.head(3).iterrows()
+)
 
-user_input = st.text_input("Ask Gemini anything:", "Hello, Gemini!")
-if st.button("Send to Gemini"):
-    response = genai.chat.create(
-        model="gemini-pro",
-        temperature=0.5,
-        messages=[
-            {"author":"system","content":"You are a helpful assistant."},
-            {"author":"user",  "content":user_input},
-        ],
-    )
-    reply = response.choices[0].message.content
-    st.write("**Gemini says:**")
-    st.write(reply)
+system = "You are a knowledgeable private-equity research assistant."
+user   = (
+    f"I’ve recommended these top 3 investors for {company}:\n\n"
+    f"{items}\n\n"
+    "Please for each give a one-sentence rationale that ties geography, sector focus, or past deals."
+)
+
+response = genai.chat.create(
+    model="gemini-pro",
+    temperature=0.6,
+    messages=[
+        {"author":"system","content":system},
+        {"author":"user",  "content":user},
+    ],
+)
+
+insight = response.choices[0].message.content
+
+st.markdown("## 💡 AI-Generated Insights")
+st.write(insight)
