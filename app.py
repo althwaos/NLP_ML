@@ -8,7 +8,7 @@ from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 
 # ───────────────────────────────────────
-# 0) CONFIGURE GEMINI
+# 0) CONFIGURE GEMINI (hard-coded key)
 # ───────────────────────────────────────
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
 
@@ -57,7 +57,7 @@ clean_subsector = clean_text(comp_row["Subsector"].iloc[0] or "")
 
 cands = PE_FUNDS.copy()
 cands["Target"] = company
-cands = cands.rename(columns={"PE_Name":"investor_id"})
+cands = cands.rename(columns={"PE_Name": "investor_id"})
 
 # portfolio metadata
 cands = cands.merge(
@@ -65,15 +65,15 @@ cands = cands.merge(
     on="Target", how="left"
 )
 
-# fund metadata (rename for clarity)
+# fund metadata (renamed to avoid collisions)
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
 ]].rename(columns={
-    "PE_Name":              "investor_id",
-    "source_country_tab":   "source_country_tab_PE_fund",
-    "Top Geographies":      "Fund_Top_Geographies",
-    "Sectors":              "Fund_Sectors"
+    "PE_Name":            "investor_id",
+    "source_country_tab": "source_country_tab_PE_fund",
+    "Top Geographies":    "Fund_Top_Geographies",
+    "Sectors":            "Fund_Sectors"
 })
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
@@ -114,12 +114,11 @@ cands["score"] = probs
 top10 = cands.nlargest(10, "score")[["investor_id","score"]]
 
 st.subheader(f"Top 10 Investors for {company}")
-st.table(top10.style.format({"score":"{:.2%}"}))
+st.table(top10.style.format({"score": "{:.2%}"}))
 
 # ───────────────────────────────────────
 # 8) AUTO-GENERATED GEMINI INSIGHTS
 # ───────────────────────────────────────
-# build top-3 list for prompt
 items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
     for i, row in top10.head(3).iterrows()
@@ -134,15 +133,15 @@ I’ve recommended these top 3 investors for {company}:
 2) For each, list one recent public news title or URL showing their interest.
 """
 
-chat = genai.chat.create(
+response = genai.chat.completions.create(
     model="gemini-pro",
     temperature=0.7,
     messages=[
-        {"author":"system","content":system},
-        {"author":"user","content":user}
+        {"author": "system", "content": system},
+        {"author": "user",   "content": user},
     ],
 )
-insight = chat.last["content"]
+insight = response.choices[0].message.content
 
 st.markdown("## 💡 AI-Generated Insights")
 st.write(insight)
