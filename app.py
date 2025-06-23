@@ -1,13 +1,18 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import joblib
 import re
 import nltk
 
+from google import genai
+import google.generativeai as genai_types
+from nltk.corpus import stopwords, wordnet
+from nltk.stem import WordNetLemmatizer
+
 # ───────────────────────────────────────
 # 0) Gemini SDK import & configure
 # ───────────────────────────────────────
-from google import genai
 client = genai.Client(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
 
 # ───────────────────────────────────────
@@ -31,9 +36,6 @@ model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifac
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
-
-from nltk.corpus import stopwords, wordnet
-from nltk.stem import WordNetLemmatizer
 
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
@@ -69,12 +71,13 @@ cands = cands.merge(
 
 # merge fund metadata (renamed)
 pe_meta = PE_FUNDS[[
-    "PE_Name","source_country_tab","Office in Spain (Y/N)","Top Geographies","Sectors"
+    "PE_Name","source_country_tab","Office in Spain (Y/N)",
+    "Top Geographies","Sectors"
 ]].rename(columns={
-    "PE_Name":              "investor_id",
-    "source_country_tab":   "source_country_tab_PE_fund",
-    "Top Geographies":      "Fund_Top_Geographies",
-    "Sectors":              "Fund_Sectors"
+    "PE_Name":            "investor_id",
+    "source_country_tab": "source_country_tab_PE_fund",
+    "Top Geographies":    "Fund_Top_Geographies",
+    "Sectors":            "Fund_Sectors"
 })
 cands = cands.merge(pe_meta, on="investor_id", how="left")
 
@@ -120,29 +123,27 @@ st.table(top10.style.format({"score": "{:.2%}"}))
 # ───────────────────────────────────────
 # 8) AUTO-GENERATED INSIGHTS via Gemini
 # ───────────────────────────────────────
+#  1) start a new chat session
+chat = client.chats.create(model="gemini-pro")
+
+#  2) send a quick system instruction
+chat.send_message(
+    "You are a knowledgeable private-equity research assistant. "
+    "Provide concise insights."
+)
+
+#  3) send the user prompt
 items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
     for i, row in top10.head(3).iterrows()
 )
-
-system = "You are a knowledgeable private-equity research assistant."
-user   = f"""
-I’ve recommended these top 3 investors for {company}:
-{items}
-
-1) Summarize why they match (geography, sector focus, past deals).
-2) For each, list one recent public news title or URL showing their interest.
-"""
-
-response = client.chat.completions.create(
-    model="gemini-pro",
-    temperature=0.7,
-    messages=[
-        {"author": "system", "content": system},
-        {"author": "user",   "content": user},
-    ],
+user_prompt = (
+    f"I’ve recommended these top 3 investors for {company}:\n{items}\n\n"
+    "Please:\n"
+    "1) Summarize why they match (geography, sector focus, past deals).\n"
+    "2) For each, list one recent public news title or URL showing their interest."
 )
-insight = response.choices[0].message.content
+response = chat.send_message(user_prompt)
 
 st.markdown("## 💡 AI-Generated Insights")
-st.write(insight)
+st.write(response.text)
