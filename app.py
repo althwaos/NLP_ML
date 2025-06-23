@@ -1,19 +1,14 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import joblib
 import re
 import nltk
 
-from google import genai
-import google.generativeai as genai_types
-from nltk.corpus import stopwords, wordnet
-from nltk.stem import WordNetLemmatizer
-
 # ───────────────────────────────────────
 # 0) Gemini SDK import & configure
 # ───────────────────────────────────────
-client = genai.Client(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
+import google.genai as genai
+genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -37,6 +32,9 @@ nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
 
+from nltk.corpus import stopwords, wordnet
+from nltk.stem import WordNetLemmatizer
+
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
 
@@ -44,13 +42,20 @@ def clean_text(text: str) -> str:
     txt = str(text).lower()
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
     tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]
-    return " ".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w) > 1)
+    return " ".join(
+        lemmatizer.lemmatize(w, wordnet.NOUN)
+        for w in tokens
+        if len(w) > 1
+    )
 
 # ───────────────────────────────────────
 # 3) UI: COMPANY SELECTOR
 # ───────────────────────────────────────
 st.title("PE-Investor Recommender + Insights")
-company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
+company = st.selectbox(
+    "Pick a portfolio company:", 
+    PORTFOLIO["Target"].unique()
+)
 
 # ───────────────────────────────────────
 # 4) BUILD CANDIDATES & METADATA
@@ -69,7 +74,7 @@ cands = cands.merge(
     on="Target", how="left"
 )
 
-# merge fund metadata (renamed)
+# merge fund metadata (with renames)
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
@@ -123,27 +128,30 @@ st.table(top10.style.format({"score": "{:.2%}"}))
 # ───────────────────────────────────────
 # 8) AUTO-GENERATED INSIGHTS via Gemini
 # ───────────────────────────────────────
-#  1) start a new chat session
-chat = client.chats.create(model="gemini-pro")
-
-#  2) send a quick system instruction
-chat.send_message(
-    "You are a knowledgeable private-equity research assistant. "
-    "Provide concise insights."
-)
-
-#  3) send the user prompt
 items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
     for i, row in top10.head(3).iterrows()
 )
-user_prompt = (
-    f"I’ve recommended these top 3 investors for {company}:\n{items}\n\n"
-    "Please:\n"
-    "1) Summarize why they match (geography, sector focus, past deals).\n"
-    "2) For each, list one recent public news title or URL showing their interest."
+
+system = "You are a knowledgeable private-equity research assistant."
+user   = f"""
+I’ve recommended these top 3 investors for {company}:
+{items}
+
+1) Summarize why they match (geography, sector focus, past deals).
+2) For each, list one recent public news title or URL showing their interest.
+"""
+
+response = genai.chat.completions.create(
+    model="gemini-pro",
+    temperature=0.7,
+    messages=[
+        {"author":"system","content":system},
+        {"author":"user",  "content":user},
+    ],
 )
-response = chat.send_message(user_prompt)
+
+insight = response.choices[0].message.content
 
 st.markdown("## 💡 AI-Generated Insights")
-st.write(response.text)
+st.write(insight)
