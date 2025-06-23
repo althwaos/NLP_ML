@@ -3,14 +3,12 @@ import pandas as pd
 import joblib
 import re
 import nltk
-import google.generativeai as genai
-from nltk.corpus import stopwords, wordnet
-from nltk.stem import WordNetLemmatizer
 
 # ───────────────────────────────────────
-# 0) CONFIGURE GEMINI (hard-coded key)
+# 0) Gemini SDK import & configure
 # ───────────────────────────────────────
-genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
+from google import genai
+client = genai.Client(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -33,6 +31,9 @@ model, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifac
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("omw-1.4")
+
+from nltk.corpus import stopwords, wordnet
+from nltk.stem import WordNetLemmatizer
 
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
@@ -108,7 +109,7 @@ X_new = (
 )
 
 # ───────────────────────────────────────
-# 7) PREDICT & SHOW TOP-10
+# 7) PREDICT & DISPLAY TOP-10
 # ───────────────────────────────────────
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
@@ -118,7 +119,7 @@ st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score": "{:.2%}"}))
 
 # ───────────────────────────────────────
-# 8) AUTO-GENERATED GEMINI INSIGHTS
+# 8) AUTO-GENERATED INSIGHTS via Gemini
 # ───────────────────────────────────────
 items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
@@ -134,7 +135,7 @@ I’ve recommended these top 3 investors for {company}:
 2) For each, list one recent public news title or URL showing their interest.
 """
 
-response = genai.chat.completions.create(
+response = client.chat.completions.create(
     model="gemini-pro",
     temperature=0.7,
     messages=[
