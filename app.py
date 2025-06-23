@@ -10,6 +10,7 @@ import google.generativeai as genai
 # 0) CONFIGURE GEMINI
 # ───────────────────────────────────────
 genai.configure(api_key="AIzaSyDy_17Hn9m6Zd3CAeOxvLdJjTlLZizdttk")
+client = genai.Client()
 
 # ───────────────────────────────────────
 # 1) LOAD & CACHE ARTIFACTS
@@ -37,7 +38,6 @@ from nltk.stem import WordNetLemmatizer
 
 lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words("english"))
-
 def clean_text(text: str) -> str:
     txt = str(text).lower()
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
@@ -52,11 +52,7 @@ def clean_text(text: str) -> str:
 # 3) UI: COMPANY SELECTOR & PIPELINE
 # ───────────────────────────────────────
 st.title("PE-Investor Recommender + Insights")
-
-company = st.selectbox(
-    "Pick a portfolio company:",
-    PORTFOLIO["Target"].unique()
-)
+company = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].unique())
 
 # Build one-row company metadata
 comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
@@ -68,13 +64,11 @@ cands = PE_FUNDS.copy()
 cands["Target"] = company
 cands = cands.rename(columns={"PE_Name":"investor_id"})
 
-# Merge portfolio metadata
+# Merge portfolio & fund metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
 )
-
-# Merge fund metadata
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
@@ -94,28 +88,27 @@ cands["NLP_Top Geographies"] = cands["Fund_Top_Geographies"].fillna("").apply(cl
 
 # Vectorize & assemble features
 for col, vect in TFIDF_VECTORS.items():
-    key = f"NLP_{col}"
-    mat = vect.transform(cands[key]).toarray()
-    df_tfidf = pd.DataFrame(
+    mat = vect.transform(cands[f"NLP_{col}"]).toarray()
+    df_t = pd.DataFrame(
         mat,
         columns=[f"TFIDF_{col}_{i}" for i in range(mat.shape[1])],
         index=cands.index
     )
-    cands = pd.concat([cands, df_tfidf], axis=1)
+    cands = pd.concat([cands, df_t], axis=1)
 
 valid_cat = [c for c in CAT_COLS if c in cands.columns]
 categ = pd.get_dummies(cands[valid_cat], drop_first=True)
 
-X_new = (
-    pd.concat([cands.filter(regex="^TFIDF_"), categ], axis=1)
-      .reindex(columns=FEATURE_COLS, fill_value=0)
-)
+X_new = pd.concat([
+    cands.filter(regex="^TFIDF_"),
+    categ
+], axis=1).reindex(columns=FEATURE_COLS, fill_value=0)
 
 # Predict & display Top-10
 probs = model.predict_proba(X_new)[:,1]
 cands["score"] = probs
-
 top10 = cands.nlargest(10, "score")[["investor_id","score"]]
+
 st.subheader(f"Top 10 Investors for {company}")
 st.table(top10.style.format({"score":"{:.2%}"}))
 
@@ -126,15 +119,14 @@ items = "\n".join(
     f"{i+1}. {row.investor_id} ({row.score:.1%})"
     for i, row in top10.head(3).iterrows()
 )
-
 system = "You are a knowledgeable private-equity research assistant."
 user   = (
-    f"I’ve recommended these top 3 investors for {company}:\n\n"
-    f"{items}\n\n"
-    "Please for each give a one-sentence rationale that ties geography, sector focus, or past deals."
+    f"I’ve recommended these top 3 investors for {company}:\n\n{items}\n\n"
+    "For each, provide a one-sentence rationale linking geography, sector focus, or past deals."
 )
 
-response = genai.chat.create(
+# Use the client.chat.create interface
+response = client.chat.create(
     model="gemini-pro",
     temperature=0.6,
     messages=[
@@ -142,8 +134,7 @@ response = genai.chat.create(
         {"author":"user",  "content":user},
     ],
 )
-
-insight = response.choices[0].message.content
+insight = response.last
 
 st.markdown("## 💡 AI-Generated Insights")
 st.write(insight)
