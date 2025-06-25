@@ -6,7 +6,5 @@ nltk>=3.8
 xgboost>=1.7
 joblib>=1.2
 openai>=0.27
-
-# ONNX inference
 onnxruntime>=1.15.0
 tf2onnx
