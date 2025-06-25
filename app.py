@@ -7,8 +7,7 @@ import nltk
 from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 from openai import AzureOpenAI
-import tensorflow as tf
-from tensorflow.keras.models import load_model
+import onnxruntime as rt
 
 # ───────────────────────────────────────
 # 0) AZURE OPENAI CONFIGURATION
@@ -29,20 +28,20 @@ client = AzureOpenAI(
 @st.cache_data(show_spinner=False)
 def load_artifacts():
     # classical model
-    xgb_model      = joblib.load("xgb_full_model.joblib")
-    # deep model + label encoder
-    deep_model     = load_model("investor_classifier_tf.keras")
-    le             = joblib.load("investor_label_encoder.joblib")
+    xgb_model     = joblib.load("xgb_full_model.joblib")
+    # ONNX deep model session + label encoder
+    onnx_sess     = rt.InferenceSession("investor_model.onnx", providers=["CPUExecutionProvider"])
+    le            = joblib.load("investor_label_encoder.joblib")
     # feature metadata
-    FEATURE_COLS   = joblib.load("feature_columns.joblib")
-    CAT_COLS       = joblib.load("categorical_columns.joblib")
-    TFIDF_VECTORS  = joblib.load("tfidf_vectorizers.joblib")
-    # data
-    PORTFOLIO      = pd.read_csv("portfolio_companies.csv")
-    PE_FUNDS       = pd.read_csv("pe_funds.csv")
-    return xgb_model, deep_model, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS
+    FEATURE_COLS  = joblib.load("feature_columns.joblib")
+    CAT_COLS      = joblib.load("categorical_columns.joblib")
+    TFIDF_VECTORS = joblib.load("tfidf_vectorizers.joblib")
+    # data tables
+    PORTFOLIO     = pd.read_csv("portfolio_companies.csv")
+    PE_FUNDS      = pd.read_csv("pe_funds.csv")
+    return xgb_model, onnx_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS
 
-xgb_model, deep_model, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
+xgb_model, onnx_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
 
 # ───────────────────────────────────────
 # 2) NLTK SETUP & TEXT CLEANER
@@ -130,8 +129,11 @@ X_new = (
 probs_xgb = xgb_model.predict_proba(X_new)[:,1]
 cands["score_xgb"]  = probs_xgb
 
-# Deep model multi-class → pick probability of the *correct* class for each row
-deep_preds = deep_model.predict(X_new)  # shape = (n_candidates, n_classes)
+# ONNX deep model inference
+inp_name  = onnx_sess.get_inputs()[0].name
+onnx_outs = onnx_sess.run(None, {inp_name: X_new.to_numpy().astype(np.float32)})
+# assume the second tensor is class probabilities: shape (n_candidates, n_classes)
+deep_preds = onnx_outs[1]
 class_idx  = le.transform(cands["investor_id"])
 probs_deep = deep_preds[np.arange(len(cands)), class_idx]
 cands["score_deep"] = probs_deep
