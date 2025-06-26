@@ -7,14 +7,14 @@ import nltk
 from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 from openai import AzureOpenAI
-import onnxruntime as rt
+import onnxruntime as ort
 
 # ───────────────────────────────────────
 # 0) AZURE OPENAI CONFIGURATION
 # ───────────────────────────────────────
 AZURE_ENDPOINT       = "https://group7project.openai.azure.com/"
 AZURE_DEPLOYMENT     = "gpt-4o-mini"
-AZURE_OPENAI_API_KEY = "7CqvJEXBe6eFMK18yVr9jB811IyfIGbw2FqxCZREkMmqwJWQNj4JJQQJ99BEACYeBjFXJ3w3AAAAACOGSx58"
+AZURE_OPENAI_API_KEY = "…"
 
 client = AzureOpenAI(
     api_key=AZURE_OPENAI_API_KEY,
@@ -25,23 +25,22 @@ client = AzureOpenAI(
 # ───────────────────────────────────────
 # 1) LOAD & CACHE MODEL ARTIFACTS
 # ───────────────────────────────────────
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def load_artifacts():
-    # classical model
     xgb_model     = joblib.load("xgb_full_model.joblib")
-    # ONNX deep model session + label encoder
-    onnx_sess     = rt.InferenceSession("investor_model.onnx", providers=["CPUExecutionProvider"])
+    ort_sess      = ort.InferenceSession(
+        "investor_model.onnx",
+        providers=["CPUExecutionProvider"]
+    )
     le            = joblib.load("investor_label_encoder.joblib")
-    # feature metadata
     FEATURE_COLS  = joblib.load("feature_columns.joblib")
     CAT_COLS      = joblib.load("categorical_columns.joblib")
     TFIDF_VECTORS = joblib.load("tfidf_vectorizers.joblib")
-    # data tables
     PORTFOLIO     = pd.read_csv("portfolio_companies.csv")
     PE_FUNDS      = pd.read_csv("pe_funds.csv")
-    return xgb_model, onnx_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS
+    return xgb_model, ort_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS
 
-xgb_model, onnx_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
+xgb_model, ort_sess, le, FEATURE_COLS, CAT_COLS, TFIDF_VECTORS, PORTFOLIO, PE_FUNDS = load_artifacts()
 
 # ───────────────────────────────────────
 # 2) NLTK SETUP & TEXT CLEANER
@@ -57,7 +56,10 @@ def clean_text(text: str) -> str:
     txt = str(text).lower()
     txt = re.sub(r"[^a-z0-9\s]", " ", txt)
     tokens = [w for w in txt.split() if w.isalpha() and w not in stop_words]
-    return " ".join(lemmatizer.lemmatize(w, wordnet.NOUN) for w in tokens if len(w) > 1)
+    return " ".join(
+        lemmatizer.lemmatize(w, wordnet.NOUN)
+        for w in tokens if len(w) > 1
+    )
 
 # ───────────────────────────────────────
 # 3) UI: MODEL SELECTOR + COMPANY SELECTOR
@@ -69,20 +71,18 @@ company      = st.selectbox("Pick a portfolio company:", PORTFOLIO["Target"].uni
 # ───────────────────────────────────────
 # 4) BUILD CANDIDATES & METADATA
 # ───────────────────────────────────────
-comp_row = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
+comp_row        = PORTFOLIO[PORTFOLIO["Target"] == company].iloc[[0]]
 clean_sector    = clean_text(comp_row["Sector"].iloc[0] or "")
 clean_subsector = clean_text(comp_row["Subsector"].iloc[0] or "")
 
-cands = PE_FUNDS.copy().rename(columns={"PE_Name":"investor_id"})
+cands = PE_FUNDS.copy().rename(columns={"PE_Name": "investor_id"})
 cands["Target"] = company
 
-# merge portfolio metadata
 cands = cands.merge(
     comp_row[["Target","Target HQ","PE HQ","source_country_tab"]],
     on="Target", how="left"
 )
 
-# merge fund metadata
 pe_meta = PE_FUNDS[[
     "PE_Name","source_country_tab","Office in Spain (Y/N)",
     "Top Geographies","Sectors"
@@ -97,10 +97,10 @@ cands = cands.merge(pe_meta, on="investor_id", how="left")
 # ───────────────────────────────────────
 # 5) BUILD NLP FIELDS
 # ───────────────────────────────────────
-cands["NLP_Sector"]         = clean_sector
-cands["NLP_Subsector"]      = clean_subsector
-cands["NLP_Sectors"]        = cands["Fund_Sectors"].fillna("").apply(clean_text)
-cands["NLP_Top Geographies"]= cands["Fund_Top_Geographies"].fillna("").apply(clean_text)
+cands["NLP_Sector"]          = clean_sector
+cands["NLP_Subsector"]       = clean_subsector
+cands["NLP_Sectors"]         = cands["Fund_Sectors"].fillna("").apply(clean_text)
+cands["NLP_Top Geographies"] = cands["Fund_Top_Geographies"].fillna("").apply(clean_text)
 
 # ───────────────────────────────────────
 # 6) VECTORIZE & ASSEMBLE FEATURES
@@ -125,27 +125,26 @@ X_new = (
 # ───────────────────────────────────────
 # 7) PREDICT & ATTACH SCORES
 # ───────────────────────────────────────
-# XGBoost binary probability
-probs_xgb = xgb_model.predict_proba(X_new)[:,1]
-cands["score_xgb"]  = probs_xgb
+probs_xgb       = xgb_model.predict_proba(X_new)[:, 1]
+cands["score_xgb"] = probs_xgb
 
-# ONNX deep model inference
-inp_name  = onnx_sess.get_inputs()[0].name
-onnx_outs = onnx_sess.run(None, {inp_name: X_new.to_numpy().astype(np.float32)})
-# assume the second tensor is class probabilities: shape (n_candidates, n_classes)
-deep_preds = onnx_outs[1]
-class_idx  = le.transform(cands["investor_id"])
-probs_deep = deep_preds[np.arange(len(cands)), class_idx]
+# **FIXED HERE**: convert DataFrame to NumPy array
+input_name = ort_sess.get_inputs()[0].name
+input_array= X_new.to_numpy().astype(np.float32)
+deep_preds    = ort_sess.run(None, {input_name: input_array})[0]
+
+class_idx    = le.transform(cands["investor_id"])
+probs_deep   = deep_preds[np.arange(len(cands)), class_idx]
 cands["score_deep"] = probs_deep
 
-# pick top-10 based on user’s choice
-score_col = "score_xgb" if model_choice=="XGBoost" else "score_deep"
+score_col    = "score_xgb" if model_choice=="XGBoost" else "score_deep"
 cands_sorted = cands.nlargest(10, score_col)[["investor_id", score_col]]
 
 st.subheader(f"Top 10 Investors ({model_choice}) for {company}")
 st.table(
-    cands_sorted.rename(columns={score_col:"score"})
-                .style.format({"score":"{:.2%}"})
+    cands_sorted
+      .rename(columns={score_col: "score"})
+      .style.format({"score": "{:.2%}"})
 )
 
 # ───────────────────────────────────────
@@ -172,8 +171,8 @@ with st.spinner("Generating insights…"):
     response = client.chat.completions.create(
         model=AZURE_DEPLOYMENT,
         messages=[
-            {"role":"system",  "content": system},
-            {"role":"user",    "content": user},
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user},
         ],
         temperature=0.7,
         max_tokens=500,
